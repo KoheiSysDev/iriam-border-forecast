@@ -35,7 +35,7 @@
 <p class="endnote">非公式の試作品です。IRIAMの運営・公式サービスとは無関係です。最終ボーダーは保証されません。画像はサーバーにアップロードしません。</p>
 </main>
 <nav class="bottom" aria-label="下部ナビ"><button data-tab="forecast" class="active"><span>📈</span>予測</button><button data-tab="record"><span>📷</span>スクショ記録</button><button data-tab="history"><span>🗂</span>履歴</button></nav>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Supabase REST API: no third-party SDK required -->
 <script>
 'use strict';
 const $=id=>document.getElementById(id),fmt=x=>Number.isFinite(x)?Math.round(x).toLocaleString('ja-JP'):'—';
@@ -51,7 +51,7 @@ function minute(t){if(t==='24:00')return 1440;let m=/^(\d\d):(\d\d)$/.exec(t||''
 const persist=()=>{try{localStorage.setItem(KEY,JSON.stringify(observations))}catch{alert('端末への保存に失敗しました。保存領域をご確認ください。')}};
 function tab(t){for(const n of ['forecast','record','history'])$('pane-'+n).classList.toggle('hidden',n!==t);document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));window.scrollTo({top:0,behavior:'smooth'});render()}
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>tab(b.dataset.tab)));$('goRecord').onclick=()=>tab('record');
-for(const id of ['day','rank'])$(id).addEventListener('change',()=>{cloudObservations=[];render();if(sb)sb.auth.getSession().then(({data})=>{if(data?.session)fetchCloud()})});
+
 document.querySelectorAll('[data-target]').forEach(b=>b.onclick=()=>{target=Number(b.dataset.target);document.querySelectorAll('[data-target]').forEach(x=>x.classList.toggle('active',Number(x.dataset.target)===target));render()});
 for(const id of ['rush','buffer'])$(id).addEventListener('input',render);
 function calculate(rows,j){const valid=rows.filter(o=>Number.isFinite(o['b'+j]));if(!valid.length)return null;let last=valid.at(-1),t=minute(last.time),current=last['b'+j],vel=0;if(valid.length>=2){let a=valid.at(-2),dt=t-minute(a.time);if(dt>0)vel=Math.max(0,(current-a['b'+j])/dt)}const mult=Number($('rush').value);const normal=Math.max(0,1437-t),rushDuration=Math.max(0,1440-Math.max(1437,t));const forecast=current+vel*normal+vel*mult*rushDuration;return {current,t,vel,forecast:Math.round(forecast),last,ready:valid.length>=2}}
@@ -66,54 +66,78 @@ let files=[];$('images').onchange=e=>{files=Array.from(e.target.files||[]);$('se
 function numbersFromText(s){return [...new Set((s.match(/\d[\d,，. ]{3,}\d/g)||[]).map(v=>v.replace(/[^\d]/g,'')).filter(x=>x.length>=4&&x.length<=8&&Number(x)<=99999999))].slice(0,60)}
 $('recognize').onclick=async()=>{if(!files.length){$('status').textContent='画像を選んでください';return}let button=$('recognize');button.disabled=true;try{if(!window.Tesseract){$('status').textContent='OCRライブラリを取得中…（ネット接続が必要です）';await new Promise((resolve,reject)=>{let s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';s.onload=resolve;s.onerror=()=>reject(Error('OCRライブラリを取得できませんでした'));document.head.append(s)})}let results=[];for(let i=0;i<files.length;i++){$('status').textContent=`${i+1}/${files.length} 枚目を認識中…`;let out=await window.Tesseract.recognize(files[i],'eng');results.push({name:files[i].name,nums:numbersFromText(out.data.text),raw:out.data.text})}let all=[...new Set(results.flatMap(r=>r.nums))].sort((a,b)=>Number(a)-Number(b));$('candidateBox').classList.remove('hidden');$('candidateNumbers').replaceChildren();for(let n of all){let b=document.createElement('button');b.textContent=Number(n).toLocaleString('ja-JP');b.onclick=async()=>{try{await navigator.clipboard.writeText(n);$('status').textContent=`${n} をコピーしました。対応する入力欄に貼り付けてください。`}catch{$('status').textContent=`候補: ${n}（入力欄に手入力してください）`}};$('candidateNumbers').append(b)}$('status').textContent=`${results.length}枚のOCRが完了。${all.length}個の候補数値を抽出しました。元画像と照合し、時刻・各ボーダーを手入力して保存してください。`;if(!all.length)$('status').textContent+=' 数字を読み取れませんでした。手入力をお使いください。';}catch(e){$('status').textContent='OCRを利用できませんでした: '+e.message+'\n手入力なら引き続き使えます。'}finally{button.disabled=false}};
 
-// --- Supabase cloud connector v0.2 ---
-let sb=null;
-const setCloudStatus=(message,connected=false)=>{$('sbMessage').textContent=message;$('cloudBadge').textContent=connected?'接続済':'未接続'};
+// --- Supabase REST connector v0.2.1 (Safari-compatible) ---
 const SB_CONFIG_KEY='iriam-border-supabase-config-v02';
-try{let cfg=JSON.parse(localStorage.getItem(SB_CONFIG_KEY)||'{}');$('sbUrl').value=cfg.url||'';$('sbKey').value=cfg.key||'';}catch{}
+const SB_TOKEN_KEY='iriam-border-supabase-session-v021';
+let sbConfig=null, sbSession=null;
+const setCloudStatus=(message,connected=false)=>{$('sbMessage').textContent=message;$('cloudBadge').textContent=connected?'接続済':'未接続'};
+try{const cfg=JSON.parse(localStorage.getItem(SB_CONFIG_KEY)||'{}');$('sbUrl').value=cfg.url||'';$('sbKey').value=cfg.key||'';}catch{}
+try{sbSession=JSON.parse(sessionStorage.getItem(SB_TOKEN_KEY)||'null')}catch{}
 function configureCloud(save=true){
-  let url=$('sbUrl').value.trim().replace(/\/$/,'');let key=$('sbKey').value.trim();
+  const url=$('sbUrl').value.trim().replace(/\/$/,'');const key=$('sbKey').value.trim();
   if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url))throw Error('Project URLの形式を確認してください');
   if(!key.startsWith('sb_publishable_')&&!key.startsWith('eyJ'))throw Error('Publishable keyまたはlegacy anon keyを入力してください');
-  if(!window.supabase?.createClient)throw Error('Supabaseライブラリを読み込めません。通信環境を確認してください');
-  if(save)localStorage.setItem(SB_CONFIG_KEY,JSON.stringify({url,key}));
-  sb=window.supabase.createClient(url,key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
-  return sb;
+  sbConfig={url,key};if(save)localStorage.setItem(SB_CONFIG_KEY,JSON.stringify(sbConfig));return sbConfig;
 }
-$('sbConnect').onclick=async()=>{try{configureCloud();setCloudStatus('設定を保存しました。次にログインしてください。')}catch(e){setCloudStatus('接続設定エラー: '+e.message)}};
+function endpoint(path){if(!sbConfig)configureCloud(false);return sbConfig.url+path}
+async function api(path,{method='GET',body=null,auth=true,headers={}}={}){
+  const h={'apikey':sbConfig.key,...headers};
+  if(auth){if(!sbSession?.access_token)throw Error('先にログインしてください');h.Authorization='Bearer '+sbSession.access_token;}
+  if(body!==null){h['Content-Type']='application/json'}
+  let response;
+  try{response=await fetch(endpoint(path),{method,headers:h,...(body!==null?{body:JSON.stringify(body)}:{})});}
+  catch(e){throw Error('通信に失敗しました（ネット接続・Project URLを確認）: '+e.message)}
+  const raw=await response.text();let result=null;
+  try{result=raw?JSON.parse(raw):null}catch{result={message:raw.slice(0,300)}}
+  if(!response.ok)throw Error(`HTTP ${response.status}: ${result?.msg||result?.message||result?.error_description||result?.error||'不明なエラー'}`);
+  return result;
+}
+function storeSession(data){sbSession={access_token:data.access_token,refresh_token:data.refresh_token,expires_at:Date.now()+Math.max(60,data.expires_in||3600)*1000,user:data.user};sessionStorage.setItem(SB_TOKEN_KEY,JSON.stringify(sbSession))}
+async function requireSession(){
+  if(!sbConfig)configureCloud(false);
+  if(!sbSession?.access_token)throw Error('先にアプリ用アカウントでログインしてください');
+  if(sbSession.expires_at&&Date.now()>sbSession.expires_at-90000){
+    if(!sbSession.refresh_token)throw Error('認証の有効期限が切れました。再ログインしてください');
+    const data=await api('/auth/v1/token?grant_type=refresh_token',{method:'POST',body:{refresh_token:sbSession.refresh_token},auth:false});storeSession(data);
+  }
+  return sbSession.user;
+}
+$('sbConnect').onclick=()=>{try{configureCloud();setCloudStatus('接続設定を保存しました。次にログインしてください。')}catch(e){setCloudStatus('接続設定エラー: '+e.message)}};
 $('sbLogin').onclick=async()=>{try{
-  if(!sb)configureCloud();const email=$('sbEmail').value.trim();const password=$('sbPassword').value;
+  configureCloud();const email=$('sbEmail').value.trim(),password=$('sbPassword').value;
   if(!email||!password)throw Error('メールとパスワードを入力してください');
-  setCloudStatus('ログイン中…');const {data,error}=await sb.auth.signInWithPassword({email,password});
-  if(error)throw error;$('sbPassword').value='';
-  const {data:roleData,error:roleErr}=await sb.from('user_roles').select('role').eq('user_id',data.user.id).maybeSingle();
-  if(roleErr)throw roleErr;if(!roleData?.role)throw Error('ログインできましたが利用権限が未登録です。user_rolesをご確認ください');
-  setCloudStatus(`ログイン成功：${roleData.role}。共有データを取得します。`,true);await fetchCloud();
-}catch(e){setCloudStatus('ログインエラー: '+e.message)}};
-$('sbLogout').onclick=async()=>{try{if(sb)await sb.auth.signOut();cloudObservations=[];render();setCloudStatus('ログアウトしました')}catch(e){setCloudStatus(e.message)}};
+  setCloudStatus('ログイン中…');const data=await api('/auth/v1/token?grant_type=password',{method:'POST',body:{email,password},auth:false});
+  storeSession(data);$('sbPassword').value='';
+  const roles=await api('/rest/v1/user_roles?select=role&user_id=eq.'+encodeURIComponent(data.user.id));
+  if(!roles?.[0]?.role)throw Error('ログインできましたがuser_rolesに権限がありません');
+  setCloudStatus('ログイン成功：'+roles[0].role+'。共有データを取得します。',true);
+  await fetchCloud();
+}catch(e){setCloudStatus('ログイン・取得エラー: '+e.message)}};
+$('sbLogout').onclick=async()=>{try{if(sbSession?.access_token)await api('/auth/v1/logout',{method:'POST'}).catch(()=>{});}finally{sbSession=null;sessionStorage.removeItem(SB_TOKEN_KEY);cloudObservations=[];render();setCloudStatus('ログアウトしました')}};
 function jstFromIso(iso){const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(iso)).map(x=>[x.type,x.value]));return {date:`${parts.year}-${parts.month}-${parts.day}`,time:`${parts.hour}:${parts.minute}`}}
-async function requireSession(){if(!sb)configureCloud(false);const {data,error}=await sb.auth.getUser();if(error||!data?.user)throw Error('先にアプリ用アカウントでログインしてください');return data.user}
-async function fetchCloud(){try{await requireSession();setCloudStatus('共有データを取得しています…',true);
+async function fetchCloud(){let phase='認証';try{
+  await requireSession();setCloudStatus('共有データを取得しています…',true);
   const day=$('day').value,rank=$('rank').value;
-  const start=new Date(`${day}T00:00:00+09:00`).toISOString(),end=new Date(`${day}T00:00:00+09:00`).getTime()+86400000;
-  const {data,error}=await sb.from('border_observations').select('id,observed_at,rank,border_2,border_4,border_6,supporter_points').eq('rank',rank).gte('observed_at',start).lt('observed_at',new Date(end).toISOString()).order('observed_at',{ascending:true}).limit(1000);
-  if(error)throw error;
+  const start=new Date(`${day}T00:00:00+09:00`).toISOString();const end=new Date(new Date(`${day}T00:00:00+09:00`).getTime()+86400000).toISOString();
+  const params=new URLSearchParams({select:'id,observed_at,rank,border_2,border_4,border_6,supporter_points',rank:'eq.'+rank,observed_at:'gte.'+start,order:'observed_at.asc',limit:'1000'});
+  params.append('observed_at','lt.'+end);
+  phase='観測データ取得';const data=await api('/rest/v1/border_observations?'+params.toString());
   cloudObservations=(data||[]).map(x=>({...jstFromIso(x.observed_at),rank:x.rank,b2:x.border_2,b4:x.border_4,b6:x.border_6,points:x.supporter_points,cloud:true,id:x.id}));
   if($('day').value!==day||$('rank').value!==rank){setCloudStatus('日付・ランクが変わりました。もう一度取得してください。',true);return}
-  render();setCloudStatus(`共有データ ${cloudObservations.length}件取得しました。`,true);
-}catch(e){setCloudStatus('取得エラー: '+e.message)}}
+  phase='画面表示';render();setCloudStatus(`共有データ ${cloudObservations.length}件取得しました。`,true);
+}catch(e){setCloudStatus('取得エラー ['+phase+']: '+e.message)}}
 $('sbFetch').onclick=fetchCloud;
 $('cloudUpload').onclick=async()=>{const button=$('cloudUpload');button.disabled=true;try{
-  const user=await requireSession();
-  const rows=observations.filter(o=>o.date===$('day').value&&o.rank===$('rank').value).sort((a,b)=>minute(b.time)-minute(a.time));
+  const user=await requireSession();const rows=observations.filter(o=>o.date===$('day').value&&o.rank===$('rank').value).sort((a,b)=>minute(b.time)-minute(a.time));
   const o=rows[0];if(!o)throw Error('先に観測を端末へ保存してください');
   if(![2,4,6].every(j=>Number.isSafeInteger(o['b'+j])))throw Error('共有には+2、+4、+6の3つの数値が必要です');
-  if(!confirm(`${o.date} ${o.time} / ${o.rank} の直近記録を共有しますか？\n+2 ${o.b2} / +4 ${o.b4} / +6 ${o.b6}\n※同時刻の既存共有データと重複する可能性があります。`))return;
-  const observedAt=new Date(`${o.date}T${o.time}:00+09:00`);if(!Number.isFinite(observedAt.getTime()))throw Error('観測日時が無効です');
-  const {error}=await sb.from('border_observations').insert({observed_at:observedAt.toISOString(),rank:o.rank,border_2:o.b2,border_4:o.b4,border_6:o.b6,supporter_points:Number.isSafeInteger(o.points)?o.points:null,submitted_by:user.id});
-  if(error)throw error;$('recordMessage').textContent='共有投稿に成功しました。';await fetchCloud();
+  if(!confirm(`${o.date} ${o.time} / ${o.rank} の直近記録を共有しますか？\n+2 ${o.b2} / +4 ${o.b4} / +6 ${o.b6}`))return;
+  const at=new Date(`${o.date}T${o.time}:00+09:00`);if(!Number.isFinite(at.getTime()))throw Error('観測日時が無効です');
+  await api('/rest/v1/border_observations',{method:'POST',body:{observed_at:at.toISOString(),rank:o.rank,border_2:o.b2,border_4:o.b4,border_6:o.b6,supporter_points:Number.isSafeInteger(o.points)?o.points:null,submitted_by:user.id},headers:{Prefer:'return=minimal'}});
+  $('recordMessage').textContent='共有投稿に成功しました。';await fetchCloud();
 }catch(e){$('recordMessage').textContent='共有エラー: '+e.message;alert('共有エラー: '+e.message)}finally{button.disabled=false}};
-try{if($('sbUrl').value&&$('sbKey').value){configureCloud(false);sb.auth.getSession().then(({data})=>{if(data?.session){setCloudStatus('ログイン情報があります。共有データを取得できます。',true);fetchCloud()}})}}catch(e){setCloudStatus(e.message)}
+for(const id of ['day','rank'])$(id).addEventListener('change',()=>{cloudObservations=[];render();if(sbSession?.access_token)fetchCloud()});
+try{if($('sbUrl').value&&$('sbKey').value){configureCloud(false);if(sbSession?.access_token){setCloudStatus('保存済みログイン情報があります。共有データを取得できます。',true);fetchCloud()}}}catch(e){setCloudStatus(e.message)}
 
 render();
 </script></body></html>
