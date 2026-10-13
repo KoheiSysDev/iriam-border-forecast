@@ -77,7 +77,40 @@ const SB_TOKEN_KEY='iriam-border-v03-user-session';
 let sbSession=null,activeRank='S1',activeName='';
 try{sbSession=JSON.parse(localStorage.getItem(SB_TOKEN_KEY)||'null')}catch{}
 const setCloudStatus=(message,connected=false)=>{$('sbMessage').textContent=message;$('cloudBadge').textContent=connected?'接続済':'未接続'};
-function ready(){if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(sbConfig.url)||!sbConfig.key||sbConfig.key.includes('YOUR_'))throw Error('config.js のProject URLと公開キーを設定してください')}
+
+function ready() {
+  const cfg = window.BORDER_CONFIG;
+
+  if (!cfg) {
+    throw Error(
+      '診断A：config.js が読み込まれていません'
+    );
+  }
+
+  if (!cfg.url || !cfg.publishableKey) {
+    throw Error(
+      '診断B：設定項目が不足しています。' +
+      ' URL=' + Boolean(cfg.url) +
+      ' KEY=' + Boolean(cfg.publishableKey)
+    );
+  }
+
+  const url = String(cfg.url).trim();
+  const key = String(cfg.publishableKey).trim();
+
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) {
+    throw Error(
+      '診断C：Project URLの形式が不正です'
+    );
+  }
+
+  if (!key.startsWith('sb_publishable_')) {
+    throw Error(
+      '診断D：Publishable keyの形式が不正です'
+    );
+  }
+}
+
 async function api(path,{method='GET',body=null,headers={},auth=false}={}){
  ready();let h={apikey:sbConfig.key,...headers};
  if(auth){await refreshSession();if(!sbSession?.access_token)throw Error('認証が必要です');h.Authorization='Bearer '+sbSession.access_token}
