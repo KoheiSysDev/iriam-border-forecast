@@ -23,7 +23,7 @@
 <div class="alert" id="progressValidation" style="white-space:pre-wrap">別日検証：未実施</div>
 </div>
 <div class="g2"><div class="stat"><div class="muted">直近ボーダー</div><b id="latest">—</b></div><div class="stat"><div class="muted">現在の応援ポイント</div><b id="points">—</b></div><div class="stat"><div class="muted">基準値との差</div><b id="margin">—</b></div></div>
-<div class="card"><div class="row between"><h2 class="title" style="margin:0">ボーダー推移</h2><span class="badge">実測 / 形状予測 v0.3.16</span></div><svg id="plot" class="chart" viewBox="0 0 340 200" role="img" aria-label="ボーダーの推移"></svg><div class="row" style="gap:16px"><span class="mini">🔵 実測</span><span class="mini">🟢 形状マッチング</span></div><p class="foot">縦軸は0〜500,000pt固定（範囲外は非表示）。緑の予測線は類似日の時間別経路を3分刻みで合成（最終3分は別区間）。予測時刻より後の当日データは用いていません。</p></div>
+<div class="card"><div class="row between"><h2 class="title" style="margin:0">ボーダー推移</h2><span class="badge">実測 / 形状予測 / 進捗率予測 v0.3.17</span></div><svg id="plot" class="chart" viewBox="0 0 340 200" role="img" aria-label="ボーダーの推移"></svg><div class="row" style="gap:16px"><span class="mini">🔵 実測</span><span class="mini">🟢 形状マッチング</span><span class="mini">🟣 進捗率モデル</span></div><p class="foot">縦軸は0〜500,000pt固定（範囲外は非表示）。緑線は類似日の形状マッチング。紫線は過去完了日の進捗率を用いて、当日1観測からでも24時まで3分刻みで逐次予測（いずれも試験値）。予測時刻より後の当日データは用いていません。</p></div>
 
 <div class="card stack"><h2 class="title" style="margin:0">基準値に対する任意の追加余裕</h2><div class="row" style="align-items:flex-end"><div class="field" style="flex:1"><label>基準値に追加するポイント</label><input id="buffer" type="number" min="0" step="1000" value="10000"></div><div style="text-align:right;flex:1"><span class="muted">目標値</span><div style="font-size:21px;font-weight:850" id="safeTarget">—</div></div></div><p class="foot" style="margin:0">基準値も追加余裕も達成を保証しません。過去の中央値に基づく参考目標です。</p></div>
 
@@ -195,12 +195,12 @@ function showShape(){
  $('shapeMatches').textContent=shape.error?'—':shape.n+'日';
  $('shapeDetail').textContent=shape.error?'形状マッチング：'+shape.error:'類似日 '+shape.matches.map(m=>m.date+'（重み'+Math.round(m.weight*100)+'%）').join(' / ')+'。完了日のみ使用・最大5日。独立日数が少ないため試験値です。区間内は過去の観測から補間し、終了直前の増分を別区間で表示します。';
 }
-function draw(rows,result){let svg=$('plot');svg.replaceChildren();const ns='http://www.w3.org/2000/svg';const node=(tag,attrs,text)=>{let el=document.createElementNS(ns,tag);for(let [k,v]of Object.entries(attrs))el.setAttribute(k,v);if(text!=null)el.textContent=text;svg.appendChild(el);return el};let data=rows.filter(o=>Number.isFinite(o['b'+target]));if(!data.length){node('text',{x:170,y:100,'text-anchor':'middle',fill:'#8290a4','font-size':13},'観測データはまだありません');return}let minT=Math.min(...data.map(o=>minute(o.time))),xMin=Math.min(minT,1380),xMax=1440;const dots=data.map(o=>({t:minute(o.time),v:o['b'+target]}));let shape=currentShape();let shaped=shape.error?[]:shape.forecast;const yMin=0,yMax=500000;const x=t=>44+(t-xMin)/(xMax-xMin)*276,y=v=>162-(v-yMin)/(yMax-yMin)*132;
+function draw(rows,result){let svg=$('plot');svg.replaceChildren();const ns='http://www.w3.org/2000/svg';const node=(tag,attrs,text)=>{let el=document.createElementNS(ns,tag);for(let [k,v]of Object.entries(attrs))el.setAttribute(k,v);if(text!=null)el.textContent=text;svg.appendChild(el);return el};let data=rows.filter(o=>Number.isFinite(o['b'+target]));if(!data.length){node('text',{x:170,y:100,'text-anchor':'middle',fill:'#8290a4','font-size':13},'観測データはまだありません');return}let minT=Math.min(...data.map(o=>minute(o.time))),xMin=Math.min(minT,1380),xMax=1440;const dots=data.map(o=>({t:minute(o.time),v:o['b'+target]}));let shape=currentShape();let shaped=shape.error?[]:shape.forecast;const progress=currentProgressPath();const progressed=progress.error?[]:progress.forecast;const yMin=0,yMax=500000;const x=t=>44+(t-xMin)/(xMax-xMin)*276,y=v=>162-(v-yMin)/(yMax-yMin)*132;
 const clipId='borderFixedClip';const defs=document.createElementNS(ns,'defs');const clip=document.createElementNS(ns,'clipPath');clip.setAttribute('id',clipId);const rect=document.createElementNS(ns,'rect');rect.setAttribute('x','44');rect.setAttribute('y','30');rect.setAttribute('width','276');rect.setAttribute('height','132');clip.appendChild(rect);defs.appendChild(clip);svg.appendChild(defs);
 for(let i=0;i<4;i++){let yy=30+i*44;node('line',{x1:44,y1:yy,x2:320,y2:yy,stroke:'#e9edf5','stroke-width':1});node('text',{x:38,y:yy+3,'text-anchor':'end',fill:'#8391a4','font-size':9},`${Math.round((yMax-i*(yMax-yMin)/3)/1000)}k`)}
-const overLimit=[...dots,...shaped].some(p=>p.v>yMax||p.v<yMin);
+const overLimit=[...dots,...shaped,...progressed].some(p=>p.v>yMax||p.v<yMin);
 if(overLimit)node('text',{x:320,y:20,'text-anchor':'end',fill:'#c2413e','font-size':9},'範囲外の値は表示を省略');
-const path=arr=>arr.map((p,i)=>`${i?'L':'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');if(dots.length>1)node('path',{d:path(dots),fill:'none',stroke:'#4967e7','stroke-width':2.7,'stroke-linejoin':'round','clip-path':`url(#${clipId})`});if(shaped.length>1)node('path',{d:path(shaped),fill:'none',stroke:'#159b77','stroke-width':2.7,'stroke-dasharray':'3 4','stroke-linecap':'round','clip-path':`url(#${clipId})`});dots.filter(p=>p.v>=yMin&&p.v<=yMax).forEach(p=>node('circle',{cx:x(p.t),cy:y(p.v),r:3.8,fill:'#4967e7',stroke:'#fff','stroke-width':1.5}));for(let t of [xMin,1380,1440].filter((v,i,a)=>v>=xMin&&a.indexOf(v)===i&& (v===xMin||v===1440||x(v)-x(xMin)>48))){node('text',{x:x(t),y:187,'text-anchor':t===xMin?'start':t===1440?'end':'middle',fill:'#8591a3','font-size':9},t===1440?'24:00':`${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`)}}
+const path=arr=>arr.map((p,i)=>`${i?'L':'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');if(dots.length>1)node('path',{d:path(dots),fill:'none',stroke:'#4967e7','stroke-width':2.7,'stroke-linejoin':'round','clip-path':`url(#${clipId})`});if(shaped.length>1)node('path',{d:path(shaped),fill:'none',stroke:'#159b77','stroke-width':2.7,'stroke-dasharray':'3 4','stroke-linecap':'round','clip-path':`url(#${clipId})`});if(progressed.length>1)node('path',{d:path(progressed),fill:'none',stroke:'#8b5cf6','stroke-width':2.7,'stroke-dasharray':'7 4','stroke-linecap':'round','clip-path':`url(#${clipId})`});dots.filter(p=>p.v>=yMin&&p.v<=yMax).forEach(p=>node('circle',{cx:x(p.t),cy:y(p.v),r:3.8,fill:'#4967e7',stroke:'#fff','stroke-width':1.5}));for(let t of [xMin,1380,1440].filter((v,i,a)=>v>=xMin&&a.indexOf(v)===i&& (v===xMin||v===1440||x(v)-x(xMin)>48))){node('text',{x:x(t),y:187,'text-anchor':t===xMin?'start':t===1440?'end':'middle',fill:'#8591a3','font-size':9},t===1440?'24:00':`${String(Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`)}}
 function baselineForCurrent(){
  if(priorRank!==activeRank||!priorRows.length)return null;
  const date=$('day').value, day=weekday(date),past=priorRows.filter(r=>validPrior(r)&&r.result_date<date);
@@ -659,6 +659,43 @@ function progressRatio(days,t,j){
 }
 function progressEstimate(days,t,j,observed){const item=progressRatio(days,t,j);if(!item||item.ratio<.05)return null;
  return {value:Math.round(observed/item.ratio),...item};}
+// v0.3.17: one-point-onward progress-ratio forecast path, separate from shape kNN.
+// Everything used for prediction comes from completed days STRICTLY before the viewed date.
+// Anchor the predicted path at the last observed border and use historical relative
+// progress ratios, avoiding a jump or implied use of future target-day observations.
+function progressPathAt(days,rows,j,date){
+ const known=rows.filter(o=>Number.isFinite(o['b'+j])&&o['b'+j]>0)
+  .map(o=>({t:Number.isFinite(o.t)?o.t:minute(o.time),v:o['b'+j]}))
+  .filter(o=>Number.isFinite(o.t)&&o.t>=0&&o.t<1440).sort((a,b)=>a.t-b.t);
+ if(!known.length)return {error:'当日の正の観測値が必要です'};
+ const last=known.at(-1),t=last.t,current=last.v;
+ const eligible=days.filter(d=>d.date<date);
+ const atT=progressRatio(eligible,t,j);
+ if(!atT||atT.ratio<.05)return {error:'過去完了日の同時間帯の進捗率が不足しています'};
+ const finalEstimate=Math.max(current,Math.round(current/atT.ratio));
+ const forecast=[{t,v:current}];
+ // Relative progress is calibrated to the current measured point, and the final
+ // estimate is explicitly the same one shown in the progress forecast card.
+ const times=new Set([1437,1440]);
+ for(let u=Math.ceil((t+1)/3)*3;u<1440;u+=3)times.add(u);
+ for(const future of [...times].filter(u=>u>t).sort((a,b)=>a-b)){
+  const item=future===1440?{ratio:1,n:atT.n}:progressRatio(eligible,future,j);
+  const fraction=Math.max(0,Math.min(1,(future-t)/(1440-t)));
+  // No future observations for some archives: interpolate toward the final
+  // instead of inserting zero or extrapolating linearly from current-day slope.
+  let share=item? (item.ratio-atT.ratio)/(1-atT.ratio):fraction;
+  if(!Number.isFinite(share))share=fraction;
+  share=Math.min(1,Math.max(0,share));
+  let v=Math.round(current+(finalEstimate-current)*share);
+  v=Math.max(forecast.at(-1).v,Math.min(finalEstimate,v));
+  forecast.push({t:future,v});
+ }
+ return {forecast,value:finalEstimate,n:atT.n,ratio:atT.ratio,experimental:true};
+}
+function currentProgressPath(){
+ if(!progressTraining.loaded||progressTraining.rank!==activeRank)return {error:'進捗率の学習が必要です'};
+ return progressPathAt(progressTraining.days,read(),target,$('day').value);
+}
 function showProgress(){
  if(!progressTraining.loaded||progressTraining.rank!==activeRank){$('progressForecast').textContent='—';$('progressDifference').textContent='—';return;}
  const date=$('day').value,days=progressTraining.days.filter(d=>d.date<date),latest=calculate(read(),target),base=baselineForCurrent();
@@ -737,7 +774,7 @@ $('priorBacktest').onclick=backtestPrior;
 function makeSnapshot(){const rows=read(),res=calculate(rows,target),shape=currentShape();if(shape.error||!Number.isFinite(shape.value))throw Error('形状マッチングの学習と当日観測が必要です');if($('day').value!==jstToday())throw Error('今日の予測だけ記録できます');const now=new Date();const item={id:now.toISOString(),predicted_at:now.toISOString(),target_date:$('day').value,rank:activeRank,threshold:target,model:'shape_matching_v0316_experimental',observed_until:res?.last?.time,observation_count:rows.length,prediction:shape.value,latest_border:res?.current,matched_days:shape.n};const a=snapshots();a.push(item);localStorage.setItem(SNAP_KEY,JSON.stringify(a));return item}
 $('saveSnapshot').onclick=()=>{try{const a=makeSnapshot();$('snapshotStatus').textContent=`保存しました：+${a.threshold} ${fmt(a.prediction)} pt ／ ${a.observation_count}観測 ／ ${a.predicted_at}`;showSnapshotCount()}catch(e){$('snapshotStatus').textContent='保存できません：'+e.message}};
 function showSnapshotCount(){ $('snapshotSummary').textContent=`この端末内の予測履歴 ${snapshots().length}件（共有DBには自動送信しません）`}
-$('exportSnapshots').onclick=()=>{const a=snapshots();const blob=new Blob([JSON.stringify({version:'v0.3.14',generated_at:new Date().toISOString(),snapshots:a},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),el=document.createElement('a');el.href=url;el.download='iriam-forecast-snapshots.json';el.click();setTimeout(()=>URL.revokeObjectURL(url),2000);$('snapshotStatus').textContent=`${a.length}件をJSONとして書き出しました。`};
+$('exportSnapshots').onclick=()=>{const a=snapshots();const blob=new Blob([JSON.stringify({version:'v0.3.17',generated_at:new Date().toISOString(),snapshots:a},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),el=document.createElement('a');el.href=url;el.download='iriam-forecast-snapshots.json';el.click();setTimeout(()=>URL.revokeObjectURL(url),2000);$('snapshotStatus').textContent=`${a.length}件をJSONとして書き出しました。`};
 $('compareSnapshots').onclick=async()=>{try{const s=snapshots().filter(x=>x.rank===activeRank);if(!s.length)throw Error('このランクの予測履歴がありません');const q=new URLSearchParams({select:'result_date,rank,border_2,border_4,border_6',rank:'eq.'+activeRank,order:'result_date.asc',limit:'1000'});const finals=await api('/rest/v1/daily_results?'+q.toString()),byDate=new Map(finals.map(x=>[x.result_date,x]));const matched=s.map(x=>({...x,actual:byDate.get(x.target_date)?.['border_'+x.threshold]})).filter(x=>Number.isFinite(x.actual));if(!matched.length)throw Error('確定値と対応する予測履歴がまだありません');const mae=matched.reduce((n,x)=>n+Math.abs(x.prediction-x.actual),0)/matched.length;const bias=matched.reduce((n,x)=>n+(x.prediction-x.actual),0)/matched.length;$('snapshotStatus').textContent=`確定値と照合：${matched.length}予測／MAE ${fmt(Math.round(mae))} pt／平均誤差 ${fmt(Math.round(bias))} pt（予測−実際）。同じ日の複数予測は独立した日ではありません。`;}catch(e){$('snapshotStatus').textContent='照合できません：'+e.message}};
 $('day').addEventListener('change',()=>{if(priorRows.length)renderPrior()});
 showSnapshotCount();
